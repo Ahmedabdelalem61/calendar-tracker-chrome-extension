@@ -50,6 +50,10 @@
       box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18), 0 4px 12px rgba(0, 0, 0, 0.1);
     }
 
+    :host-context(.dragging) .widget-collapsed:hover {
+      transform: none;
+    }
+
     .widget-collapsed svg {
       width: 26px;
       height: 26px;
@@ -286,6 +290,74 @@
   let meetings = [];
   let countdownInterval = null;
 
+  // --- Drag-to-move logic ---
+  let isDragging = false;
+  let dragStartX, dragStartY, hostStartX, hostStartY;
+  let hasDragged = false;
+
+  // Load saved position
+  chrome.storage.local.get(['widgetPosX', 'widgetPosY'], (data) => {
+    if (data.widgetPosX != null && data.widgetPosY != null) {
+      host.style.right = 'auto';
+      host.style.bottom = 'auto';
+      host.style.left = data.widgetPosX + 'px';
+      host.style.top = data.widgetPosY + 'px';
+    }
+  });
+
+  host.addEventListener('mousedown', (e) => {
+    // Don't drag when clicking buttons/links inside the widget
+    const path = e.composedPath();
+    if (path.some((el) => el.tagName === 'BUTTON' || el.tagName === 'A')) return;
+
+    isDragging = true;
+    hasDragged = false;
+    dragStartX = e.clientX;
+    dragStartY = e.clientY;
+
+    const rect = host.getBoundingClientRect();
+    hostStartX = rect.left;
+    hostStartY = rect.top;
+
+    host.classList.add('dragging');
+    e.preventDefault();
+  });
+
+  document.addEventListener('mousemove', (e) => {
+    if (!isDragging) return;
+
+    const dx = e.clientX - dragStartX;
+    const dy = e.clientY - dragStartY;
+
+    if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
+      hasDragged = true;
+    }
+
+    let newX = hostStartX + dx;
+    let newY = hostStartY + dy;
+
+    // Clamp within viewport
+    const hostRect = host.getBoundingClientRect();
+    newX = Math.max(0, Math.min(newX, window.innerWidth - hostRect.width));
+    newY = Math.max(0, Math.min(newY, window.innerHeight - hostRect.height));
+
+    host.style.right = 'auto';
+    host.style.bottom = 'auto';
+    host.style.left = newX + 'px';
+    host.style.top = newY + 'px';
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (!isDragging) return;
+    isDragging = false;
+    host.classList.remove('dragging');
+
+    if (hasDragged) {
+      const rect = host.getBoundingClientRect();
+      chrome.storage.local.set({ widgetPosX: rect.left, widgetPosY: rect.top });
+    }
+  });
+
   // Load saved state
   chrome.storage.local.get(['widgetExpanded', 'cachedMeetings'], (data) => {
     isExpanded = data.widgetExpanded || false;
@@ -351,6 +423,7 @@
       ${activeMeetings.length > 0 ? `<span class="badge ${hasSoon ? 'urgent' : ''}">${activeMeetings.length}</span>` : ''}
     `;
     el.addEventListener('click', () => {
+      if (hasDragged) return; // Don't expand if we just finished dragging
       isExpanded = true;
       chrome.storage.local.set({ widgetExpanded: true });
       render();
